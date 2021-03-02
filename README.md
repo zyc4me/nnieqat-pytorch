@@ -1,15 +1,18 @@
 # nnieqat-pytorch
 
-This is a quantize aware training package for  Neural Network Inference Engine(NNIE) on pytorch, it uses hisilicon quantization library to quantize module's weight and input data as fake fp32 format. To train model which is more friendly to NNIE, just import nnieqat and replace torch.nn default modules with corresponding one.
+Nnieqat is a quantize aware training package for  Neural Network Inference Engine(NNIE) on pytorch, it uses hisilicon quantization library to quantize module's weight and activation as fake fp32 format.
+
 
 ## Table of Contents
 
-1. [Installation](#installation)
-2. [Usage](#usage)
-3. [Code Examples](#examples)
-4. [Results](#results)
-5. [Todo](#Todo)
-6. [Reference](#reference)
+- [nnieqat-pytorch](#nnieqat-pytorch)
+  - [Table of Contents](#table-of-contents)
+  - [Installation](#installation)
+  - [Usage](#usage)
+  - [Code Examples](#code-examples)
+  - [Results](#results)
+  - [Todo](#todo)
+  - [Reference](#reference)
 
 
 <div id="installation"></div>  
@@ -17,67 +20,85 @@ This is a quantize aware training package for  Neural Network Inference Engine(N
 ## Installation
 
 * Supported Platforms: Linux
-* Accelerators and GPUs: NVIDIA GPUs via CUDA driver 10.
+* Accelerators and GPUs: NVIDIA GPUs via CUDA driver ***10.1*** or ***10.2***.
 * Dependencies:
   * python >= 3.5, < 4
   * llvmlite >= 0.31.0
-  * pytorch >= 1.0
+  * pytorch >= 1.5
   * numba >= 0.42.0
   * numpy >= 1.18.1
-* Install nnieqat via pypi:
+* Install nnieqat via pypi:  
+  ```shell
   $ pip install nnieqat
+  ```
+
+* Install nnieqat in docker(easy way to solve environment problems)：
+  ```shell
+  $ cd docker
+  $ docker build -t nnieqat-image .
+
+  ```
+* Install nnieqat via repo：
+  ```shell
+  $ git clone https://github.com/aovoc/nnieqat-pytorch
+  $ cd nnieqat-pytorch
+  $ make install
+  ```
 
 <div id="usage"></div>
 
 ## Usage
 
-* Replace default module with NNIE quantization optimized one. include:
-  * torch.nn.modules.conv -> nnieqat.modules.conv
-  * torch.nn.modules.linear -> nnieqat.modules.linear
-  * torch.nn.modules.pooling -> nnieqat.modules.pooling
+* add quantization hook.
+
+  quantize and dequantize weight and data with HiSVP GFPQ library in forward() process.
 
   ```python
-  from nnieqat.modules import convert_layers
+
+  from nnieqat import quant_dequant_weight, unquant_weight, merge_freeze_bn, register_quantization_hook
   ...
   ...
-    model = convert_layers(model)
-    print(model)  # Quantized layers have "Quantized" prefix.
+    register_quantization_hook(model)
   ...
   ```
 
-* Freeze bn after a few epochs of training
+* merge bn weight into conv and freeze bn
+
+  suggest finetuning from a well-trained model, merge_freeze_bn at beginning. do it after a few epochs of training otherwise.
 
   ```python
-  from nnieqat.gpu.quantize import freeze_bn
+  from nnieqat import quant_dequant_weight, unquant_weight, merge_freeze_bn, register_quantization_hook
   ...
   ...
-      if epoch > 2:
-        net.apply(freeze_bn)
+      model.train()
+      model = merge_freeze_bn(model)  #it will change bn to eval() mode during training
   ...
   ```
 
 * Unquantize weight before update it
 
   ```python
-  from nnieqat.gpu.quantize import unquant_weight
+  from nnieqat import quant_dequant_weight, unquant_weight, merge_freeze_bn, register_quantization_hook
   ...
   ...
-      net.apply(unquant_weight)
+      model.apply(unquant_weight)  # using original weight while updating
       optimizer.step()
   ...
   ```
 
-* Dump weight quantized model
+* Dump weight optimized model
 
   ```python
-  from nnieqat.gpu.quantize import quant_weight, unquant_weight
+  from nnieqat import quant_dequant_weight, unquant_weight, merge_freeze_bn, register_quantization_hook
   ...
   ...
-      net.apply(quant_weight)
+      model.apply(quant_dequant_weight)
       save_checkpoint(...)
-      net.apply(unquant_weight)
+      model.apply(unquant_weight)
   ...
   ```
+
+* Using EMA with caution(Not recommended).
 
 <div id="examples"></div>
 
@@ -113,12 +134,47 @@ This is a quantize aware training package for  Neural Network Inference Engine(N
     | nnie_lr_e-4_ft | 0.57834   | 0.57524   | 0.57730 |  
 
 
+* coco
+
+net: simplified  yolov5s
+
+train 300 epoches, hi3559 test result:   
+
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.338   
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.540   
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.357   
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.187   
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.377   
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.445   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.284   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.484   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.542   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.357   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.595   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.679   
+
+
+finetune 20 epoches, hi3559 test result:   
+
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.339   
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.539   
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.360   
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.191   
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.378   
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.446   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.285   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.485   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.544   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.361   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.596   
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.683   
+
+
+
 <div id="Todo"></div>
 
 ## Todo
 
-* Multiple GPU training support.
-* Other platforms and accelerators support.
 * Generate quantized model directly.
 
 <div id="reference"></div>  
@@ -133,9 +189,9 @@ HiSVP 量化库使用指南
 
 [Distilling the Knowledge in a Neural Network][distillingNN]
 
-[cifar10_qat]: https://gitlab.deepglint.com/chenMQ/nnieqat-pytorch/-/blob/master/test/test_cifar10.py
+[cifar10_qat]: https://github.com/aovoc/nnieqat-pytorch/blob/master/test/test_cifar10.py
 
-[imagenet_qat]: https://gitlab.deepglint.com/chenMQ/nnieqat-pytorch/-/blob/master/test/test_imagenet.py
+[imagenet_qat]: https://github.com/aovoc/nnieqat-pytorch/blob/master/test/test_imagenet.py
 
 [imagenet_example]: https://github.com/pytorch/examples/blob/master/imagenet/main.py
 
@@ -146,5 +202,3 @@ HiSVP 量化库使用指南
 [trt_quant]: https://on-demand.gputechconf.com/gtc/2017/presentation/s7310-8-bit-inference-with-tensorrt.pdf
 
 [distillingNN]: https://arxiv.org/abs/1503.02531
-
-[apprentice]: https://arxiv.org/abs/1711.05852

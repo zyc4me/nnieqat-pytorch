@@ -1,6 +1,3 @@
-import nnieqat
-from nnieqat.gpu.quantize import quant_weight, unquant_weight, freeze_bn
-from nnieqat.modules import convert_layers
 import argparse
 import os
 import random
@@ -8,6 +5,7 @@ import shutil
 import time
 import warnings
 
+from nnieqat import quant_dequant_weight, unquant_weight, merge_freeze_bn, register_quantization_hook
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -139,9 +137,8 @@ def main_worker(gpu, ngpus_per_node, args):
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
-    model = convert_layers(model)
-    print(model)
-    model.apply(freeze_bn)
+    register_quantization_hook(model)
+
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
     elif args.distributed:
@@ -260,13 +257,13 @@ def main_worker(gpu, ngpus_per_node, args):
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
             # dump weight quantized model.
-            model.apply(quant_weight)
+            model.apply(quant_dequant_weight)
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
-                'optimizer' : optimizer.state_dict(),
+                'optimizer': optimizer.state_dict(),
             }, is_best)
             model.apply(unquant_weight)
 
@@ -284,9 +281,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
     # switch to train mode
     model.train()
-
+    model = merge_freeze_bn(model)
     end = time.time()
-    for i, (images, target) in enumerate(train_loader):
+
+    for i, (images, target) in enumerate(train_loader): 
         # measure data loading time
         data_time.update(time.time() - end)
 

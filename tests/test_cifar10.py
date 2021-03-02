@@ -1,15 +1,14 @@
 # -*- coding:utf-8 -*-
-import nnieqat
-from nnieqat.gpu.quantize import quant_weight, unquant_weight, freeze_bn
-from nnieqat.modules import convert_layers
+from nnieqat import quant_dequant_weight, unquant_weight, merge_freeze_bn, register_quantization_hook
 import unittest
 import torch
-from torch.autograd import Variable
-import torchvision
-import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd import Variable
+import torchvision
+import torchvision.transforms as transforms
+
 
 
 class Net(nn.Module):
@@ -57,8 +56,7 @@ class TestCifar10(unittest.TestCase):
         dataiter = iter(trainloader)
         images, labels = dataiter.next()
         net = Net()
-        net = convert_layers(net)
-        print(net)
+        register_quantization_hook(net)
         net.cuda()
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
@@ -68,7 +66,7 @@ class TestCifar10(unittest.TestCase):
         for epoch in range(5):
             net.train()
             if epoch > 2:
-                net.apply(freeze_bn)
+                net = merge_freeze_bn(net)
             running_loss = 0.0
             for i, data in enumerate(trainloader, 0):
                 inputs, labels = data
@@ -88,7 +86,7 @@ class TestCifar10(unittest.TestCase):
                     running_loss = 0.0
         print('Finished Training.')
 
-        # net.apply(quant_weight)
+        # net.apply(quant_dequant_weight)
         correct = total = 0
         for data in testloader:
             images, labels = data
@@ -98,7 +96,7 @@ class TestCifar10(unittest.TestCase):
             total += labels.size(0)
         print(
             'Accuracy(10000 test images, modules\' weight unquantize): %d %%' %
-            (100 * correct / total))
+            (100.0 * correct / total))
 
 
 if __name__ == "__main__":
